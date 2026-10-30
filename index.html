@@ -1,0 +1,561 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Игра для наставника: Кто + Проблема + Где</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #06080f;
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    color: #eef1ff;
+    overflow: hidden;
+  }
+
+  /* ===== 16:9 КОНТЕЙНЕР (ДЛЯ ПК И ГОРИЗОНТАЛЬНЫХ ЭКРАНОВ) ===== */
+  .app {
+    --w: min(100vw, 177.778vh);
+    width: var(--w);
+    height: calc(var(--w) * 9 / 16);
+    font-size: calc(var(--w) / 100);
+    background: radial-gradient(circle at 20% 0%, #1b2140 0%, #0f1220 60%);
+    border-radius: 0.6em;
+    display: flex;
+    flex-direction: column;
+    padding: 1.4em 1.6em;
+    gap: 1em;
+    overflow: hidden;
+    position: relative;
+  }
+  .app:fullscreen, .app:-webkit-full-screen { border-radius: 0; }
+
+  /* ===== МОБИЛЬНАЯ ВЕРСИЯ (ПОРТРЕТНЫЙ РЕЖИМ) ===== */
+  @media (orientation: portrait) {
+    body { overflow: auto; align-items: flex-start; }
+    .app {
+      width: 100vw;
+      height: auto;
+      min-height: 100vh;
+      border-radius: 0;
+      font-size: 16px;
+      padding: 15px;
+    }
+    .board {
+      grid-template-columns: 1fr;
+      height: auto;
+      gap: 15px;
+    }
+    .stack {
+      height: 250px;
+    }
+    .footer {
+      flex-direction: column;
+      gap: 15px;
+      padding: 15px;
+    }
+    .round-info {
+      text-align: center;
+      order: -1;
+    }
+    .btn-group { width: 100%; justify-content: center; }
+    .fs-btn { display: none; }
+  }
+
+  /* ===== ШАПКА ===== */
+  .header { text-align: center; }
+  .header h1 { font-size: 2.4em; letter-spacing: 0.02em; line-height: 1.1; }
+  .header .sub { font-size: 1.15em; color: #9aa3c7; margin-top: 0.25em; }
+
+  /* ===== ИГРОВОЕ ПОЛЕ ===== */
+  .board {
+    flex: 1;
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1.3em;
+    min-height: 0;
+    perspective: 60em;
+  }
+
+  .stack {
+    position: relative;
+    cursor: pointer;
+    transform-style: preserve-3d;
+    transition: transform 0.25s ease;
+    min-height: 0;
+    z-index: 1;
+  }
+  .stack:hover:not(.disabled) { transform: translateY(-0.3em); }
+  .stack.disabled { cursor: default; }
+
+  .stack::before, .stack::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: 1.1em;
+    background: linear-gradient(160deg, #243056, #151a2e);
+    border: 1px solid #2a3155;
+    transition: transform 0.3s ease;
+    z-index: -1; 
+  }
+  .stack::before { transform: translate(0.5em, 0.5em) rotate(1.5deg); opacity: 0.6; }
+  .stack::after  { transform: translate(0.25em, 0.25em) rotate(0.7deg); opacity: 0.85; }
+
+  .flip-card {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    transform-style: preserve-3d;
+    transition: transform 0.7s cubic-bezier(0.4, 0.2, 0.2, 1);
+    border-radius: 1.1em;
+  }
+  .stack.revealed .flip-card { transform: rotateY(180deg); }
+
+  .face {
+    position: absolute;
+    inset: 0;
+    border-radius: 1.1em;
+    backface-visibility: hidden;
+    -webkit-backface-visibility: hidden;
+    padding: 1.1em;
+    display: flex;
+    flex-direction: column;
+    border: 1px solid #2a3155;
+    overflow: hidden;
+  }
+
+  .face.back {
+    background:
+      repeating-linear-gradient(45deg, rgba(108,140,255,0.06) 0 0.6em, transparent 0.6em 1.2em),
+      linear-gradient(160deg, #243056, #151a2e);
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    gap: 0.5em;
+  }
+  .face.back .suit  { font-size: 3em; color: #ffffff; opacity: 0.8; line-height: 1; }
+  .face.back .hint  { color: #ffffff; opacity: 0.7; font-size: 0.9em; letter-spacing: 0.15em; text-transform: uppercase; }
+  .face.back .name  { color: #ffffff; font-weight: 700; font-size: 1.3em; line-height: 1.25; text-shadow: 0 2px 4px rgba(0,0,0,0.5); }
+
+  .face.front {
+    background: #1a1f35;
+    transform: rotateY(180deg);
+    justify-content: flex-start;
+  }
+  .deck-label { font-size: 0.85em; letter-spacing: 0.15em; text-transform: uppercase; color: #9aa3c7; margin-bottom: 0.3em; }
+  .deck-title { font-size: 1em; color: #6c8cff; font-weight: 600; margin-bottom: 0.7em; line-height: 1.2; }
+  .card-text {
+    font-size: 1.3em;
+    line-height: 1.35;
+    flex: 1;
+    display: flex;
+    align-items: center;
+    overflow: auto;
+    color: #ffffff;
+  }
+
+  /* ===== НИЖНЯЯ ПАНЕЛЬ ===== */
+  .footer {
+    display: flex;
+    align-items: center;
+    gap: 1.2em;
+    background: #1a1f35;
+    border: 1px solid #2a3155;
+    border-radius: 1.3em;
+    padding: 0.8em 1.3em;
+    flex-wrap: nowrap;
+    min-height: 0;
+    z-index: 10;
+  }
+
+  .timer-display {
+    font-variant-numeric: tabular-nums;
+    font-size: 3.8em;
+    font-weight: 800;
+    color: #ffb86c;
+    min-width: 3em;
+    text-align: center;
+    letter-spacing: 0.04em;
+    line-height: 1;
+  }
+  .timer-display.warn { color: #ff6b6b; animation: pulse 0.8s infinite; }
+  @keyframes pulse { 50% { opacity: 0.5; } }
+
+  .round-info { flex: 1; font-size: 1.05em; color: #9aa3c7; line-height: 1.4; min-width: 0; }
+  .round-info b { color: #eef1ff; }
+
+  .btn-group { display: flex; gap: 0.7em; }
+
+  button {
+    font: inherit;
+    font-size: 1.15em;
+    font-weight: 600;
+    cursor: pointer;
+    border: none;
+    padding: 0.65em 1.2em;
+    border-radius: 0.75em;
+    transition: transform 0.1s, filter 0.2s, background 0.2s;
+    white-space: nowrap;
+  }
+  button:active:not(:disabled) { transform: scale(0.97); }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+  .primary { background: #6c8cff; color: #0b0f1e; }
+  .primary:hover:not(:disabled) { filter: brightness(1.1); }
+  .ghost { background: transparent; color: #eef1ff; border: 1px solid #39406b; }
+  .ghost:hover:not(:disabled) { background: #232a4a; }
+
+  /* ===== КНОПКА FULLSCREEN ===== */
+  .fs-btn {
+    position: absolute;
+    top: 0.8em;
+    right: 0.9em;
+    background: transparent;
+    color: #9aa3c7;
+    border: 1px solid #39406b;
+    padding: 0.35em 0.7em;
+    font-size: 0.95em;
+    border-radius: 0.55em;
+    z-index: 10;
+  }
+  .fs-btn:hover { background: #232a4a; color: #eef1ff; }
+</style>
+</head>
+<body>
+
+<div class="app" id="app">
+  <button class="fs-btn" id="fsBtn" title="Полный экран">⛶ На весь экран</button>
+
+  <div class="header">
+    <h1>Кто + Проблема + Где</h1>
+    <p class="sub">Спикер сам открывает карты · 4 раунда · 15 минут</p>
+  </div>
+
+  <div class="board">
+    <div class="stack" data-deck="who" id="stackWho">
+      <div class="flip-card">
+        <div class="face back">
+          <div class="suit">✦</div>
+          <div class="hint">Колода 1</div>
+          <div class="name">Кто этот подросток</div>
+        </div>
+        <div class="face front">
+          <div class="deck-label">Колода 1</div>
+          <div class="deck-title">Кто этот подросток</div>
+          <div class="card-text" id="cardWho">—</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="stack" data-deck="problem" id="stackProblem">
+      <div class="flip-card">
+        <div class="face back">
+          <div class="suit">◆</div>
+          <div class="hint">Колода 2</div>
+          <div class="name">Что у него болит</div>
+        </div>
+        <div class="face front">
+          <div class="deck-label">Колода 2</div>
+          <div class="deck-title">Что у него болит</div>
+          <div class="card-text" id="cardProblem">—</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="stack" data-deck="where" id="stackWhere">
+      <div class="flip-card">
+        <div class="face back">
+          <div class="suit">◈</div>
+          <div class="hint">Колода 3</div>
+          <div class="name">Где и сколько времени</div>
+        </div>
+        <div class="face front">
+          <div class="deck-label">Колода 3</div>
+          <div class="deck-title">Где и сколько времени</div>
+          <div class="card-text" id="cardWhere">—</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="footer">
+    <div class="timer-display" id="timer">—:—</div>
+    <div class="btn-group">
+      <button class="primary" id="startTimer" disabled>Старт</button>
+      <button class="ghost" id="resetTimer" disabled>Сброс</button>
+    </div>
+    <div class="round-info" id="roundInfo">
+      Раунд <b>1</b> из <b>4</b>. Спикер кликает по стопкам — карты открываются.
+    </div>
+    <div class="btn-group">
+      <button class="primary" id="nextRound">Новый раунд</button>
+      <button class="ghost" id="soundToggle">Звук: вкл</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// @ts-nocheck
+const Sound = (() => {
+  let ctx = null;
+  let enabled = true;
+  function ensureCtx(){
+    if(!ctx){
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if(AC) ctx = new AC();
+    }
+    if(ctx && ctx.state === 'suspended') ctx.resume();
+    return ctx;
+  }
+  function tone(freq, duration, type = 'sine', volume = 0.15, when = 0){
+    if(!enabled) return;
+    const c = ensureCtx();
+    if(!c) return;
+    const t0 = c.currentTime + when;
+    const osc = c.createOscillator();
+    const gain = c.createGain();
+    osc.type = type;
+    osc.frequency.setValueAtTime(freq, t0);
+    gain.gain.setValueAtTime(0, t0);
+    gain.gain.linearRampToValueAtTime(volume, t0 + 0.01);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t0 + duration);
+    osc.connect(gain).connect(c.destination);
+    osc.start(t0);
+    osc.stop(t0 + duration + 0.05);
+  }
+  return {
+    flip(){ tone(520, 0.08, 'triangle', 0.12); tone(780, 0.06, 'sine', 0.08, 0.04); },
+    tick(){ tone(880, 0.05, 'square', 0.06); },
+    end(){
+      tone(660, 0.25, 'sine', 0.18, 0);
+      tone(550, 0.25, 'sine', 0.18, 0.25);
+      tone(440, 0.45, 'sine', 0.20, 0.50);
+    },
+    setEnabled(v){ enabled = v; if(v) ensureCtx(); },
+    isEnabled(){ return enabled; }
+  };
+})();
+
+const whoDeck = [
+  "Подросток, который слишком старается понравиться (гипервежливый, заглядывает в глаза)",
+  "Очень скрытный подросток (односложные ответы, телефон в руках)",
+  "Подросток, который сразу соглашается: «Да, я всё понимаю, я хочу меняться»",
+  "Подросток, который живёт с бабушкой (родители на заработках)",
+  "Подросток из приёмной семьи (недавно переведён, проверяет границы)",
+  "Подросток из семьи верующих родителей (жёсткие правила, страх «согрешить»)",
+  "Подросток, у которого «много грехов» за спиной (кражи, драки, приводы)",
+  "Подросток, который порезал себя (вы заметили следы)",
+  "Подросток, который агрессивен с порога: «Мне ничего от вас не надо»",
+  "Подросток из очень обеспеченной семьи (всё есть, но родители всегда заняты)",
+  "Подросток, который недавно переехал из другой страны (плохо говорит по-русски)",
+  "Подросток, над которым травят в школе"
+];
+
+const problemDeck = [
+  "«Я не знаю, кем хочу быть, и это меня парализует»",
+  "«Если я откроюсь, это потом используют против меня»",
+  "«Мне кажется, всем будет лучше без меня»",
+  "«Я никому не верю, все взрослые врали»",
+  "«Я режу себя, потому что иначе не могу выдохнуть»",
+  "«В церкви все думают, что я хороший, а я не хочу туда ходить»",
+  "«Я ненавижу взрослых, которые делают вид, что хотят помочь»",
+  "«Мама говорит, что я её разочаровал»",
+  "«Я учусь на одни пятёрки, но чувствую себя пустым»",
+  "«Меня травят в чате класса, а родителям я не говорю»",
+  "«Я не могу оторваться от телефона, даже когда мне плохо»",
+  "«Я специально всё порчу, когда становится слишком хорошо»"
+];
+
+const whereDeck = [
+  { text: "Школьный коридор на перемене. Вокруг люди, он уже уходит.", sec: 60 },
+  { text: "Лавочка во дворе. Он гуляет, вы «случайно» присели.", sec: 180 },
+  { text: "Кабинет соцпедагога. Дверь закрыта, время ограничено.", sec: 300 },
+  { text: "Он написал в чат в 3 ночи. Вы не рядом, только текст.", sec: 60 },
+  { text: "Больница, он ждёт врача. Коридор, тревога, свидетели рядом.", sec: 300 },
+  { text: "Кафе. Официант уже принял заказ, пауза давит.", sec: 180 },
+  { text: "После тренировки. Он уставший, расслабленный, но собирается уходить.", sec: 180 },
+  { text: "Он пришёл к вам сам. Стоит у двери, но может уйти в любой момент.", sec: 300 },
+  { text: "Дорога домой в автобусе. Некуда деться, но и в глаза не смотрите.", sec: 120 },
+  { text: "Комиссия / инспекция, он ждёт решения. Родители за дверью.", sec: 300 }
+];
+
+const TOTAL_ROUNDS = 4;
+let currentRound = 1;
+let lastSec = 0;
+
+const stackWho = document.getElementById('stackWho');
+const stackProblem = document.getElementById('stackProblem');
+const stackWhere = document.getElementById('stackWhere');
+const elWho = document.getElementById('cardWho');
+const elProblem = document.getElementById('cardProblem');
+const elWhere = document.getElementById('cardWhere');
+const elTimer = document.getElementById('timer');
+const btnNext = document.getElementById('nextRound');
+const btnStart = document.getElementById('startTimer');
+const btnReset = document.getElementById('resetTimer');
+const btnSound = document.getElementById('soundToggle');
+const btnFs = document.getElementById('fsBtn');
+const elInfo = document.getElementById('roundInfo');
+
+let timerInterval = null;
+let timeLeft = 0;
+let timerRunning = false;
+
+function pick(arr){ return arr[Math.floor(Math.random()*arr.length)]; }
+function fmt(sec){
+  const m = Math.floor(sec/60);
+  const s = sec%60;
+  return `${m}:${String(s).padStart(2,'0')}`;
+}
+function allRevealed(){
+  return stackWho.classList.contains('revealed') &&
+         stackProblem.classList.contains('revealed') &&
+         stackWhere.classList.contains('revealed');
+}
+
+function stopTimer(){
+  if(timerInterval){ clearInterval(timerInterval); timerInterval = null; }
+  timerRunning = false;
+  if(!btnStart.disabled) btnStart.textContent = 'Старт';
+}
+
+function setTimer(sec){
+  stopTimer();
+  lastSec = sec;
+  timeLeft = sec;
+  elTimer.textContent = fmt(sec);
+  elTimer.classList.remove('warn');
+  btnStart.disabled = false;
+  btnReset.disabled = false;
+  btnStart.textContent = 'Старт';
+}
+
+function startTimer(){
+  if(timerRunning || timeLeft <= 0 || btnStart.disabled) return;
+
+  if(!allRevealed()){
+    const missing = [];
+    if(!stackWho.classList.contains('revealed')) missing.push('«Кто»');
+    if(!stackProblem.classList.contains('revealed')) missing.push('«Проблема»');
+    if(!stackWhere.classList.contains('revealed')) missing.push('«Где»');
+    elInfo.textContent = `Сначала откройте: ${missing.join(', ')}.`;
+    return;
+  }
+
+  timerRunning = true;
+  btnStart.textContent = 'Пауза';
+  timerInterval = setInterval(() => {
+    timeLeft--;
+    elTimer.textContent = fmt(timeLeft);
+
+    if(timeLeft <= 10 && timeLeft > 0){
+      elTimer.classList.add('warn');
+      if(document.visibilityState === 'visible') Sound.tick();
+    }
+
+    if(timeLeft <= 0){
+      stopTimer();
+      elTimer.textContent = '0:00';
+      Sound.end();
+      elInfo.innerHTML = 'Время вышло. Нажмите «Новый раунд» или обсудите ответ.';
+    }
+  }, 1000);
+}
+
+function reveal(stack, deckType){
+  if(stack.classList.contains('revealed') || stack.classList.contains('disabled')) return;
+
+  stack.classList.add('disabled');
+  Sound.flip();
+
+  if(deckType === 'who'){
+    elWho.textContent = pick(whoDeck);
+  } else if(deckType === 'problem'){
+    elProblem.textContent = pick(problemDeck);
+  } else if(deckType === 'where'){
+    const w = pick(whereDeck);
+    elWhere.textContent = w.text;
+    setTimer(w.sec);
+  }
+
+  stack.classList.add('revealed');
+
+  if(allRevealed()){
+    elInfo.innerHTML = `Все карты открыты. Нажмите «Старт» — и спикер импровизирует.`;
+  } else {
+    elInfo.innerHTML = `Раунд <b>${currentRound}</b> из <b>${TOTAL_ROUNDS}</b>. Открывайте следующую карту.`;
+  }
+}
+
+function newRound(){
+  stopTimer();
+  [stackWho, stackProblem, stackWhere].forEach(s => {
+    s.classList.remove('revealed');
+    s.classList.remove('disabled');
+  });
+  elWho.textContent = '—';
+  elProblem.textContent = '—';
+  elWhere.textContent = '—';
+  elTimer.textContent = '—:—';
+  elTimer.classList.remove('warn');
+  btnStart.disabled = true;
+  btnReset.disabled = true;
+  btnStart.textContent = 'Старт';
+  lastSec = 0;
+  timeLeft = 0;
+
+  if(currentRound < TOTAL_ROUNDS){
+    currentRound++;
+    elInfo.innerHTML = `Раунд <b>${currentRound}</b> из <b>${TOTAL_ROUNDS}</b>. Спикер кликает по стопкам — карты открываются.`;
+  } else {
+    btnNext.disabled = true;
+    btnNext.textContent = 'Игра окончена';
+    elInfo.innerHTML = `Все <b>${TOTAL_ROUNDS}</b> раунда пройдены. Ведущий подводит итог: «Вот кто к нему пришёл — и вот кто его встретил».`;
+  }
+}
+
+stackWho.addEventListener('click', () => reveal(stackWho, 'who'));
+stackProblem.addEventListener('click', () => reveal(stackProblem, 'problem'));
+stackWhere.addEventListener('click', () => reveal(stackWhere, 'where'));
+
+btnNext.addEventListener('click', newRound);
+
+btnStart.addEventListener('click', () => {
+  if(timerRunning) stopTimer();
+  else startTimer();
+});
+
+btnReset.addEventListener('click', () => {
+  if(lastSec) setTimer(lastSec);
+});
+
+btnSound.addEventListener('click', () => {
+  const now = !Sound.isEnabled();
+  Sound.setEnabled(now);
+  btnSound.textContent = now ? 'Звук: вкл' : 'Звук: выкл';
+  if(now) Sound.flip();
+});
+
+btnFs.addEventListener('click', () => {
+  const el = document.documentElement;
+  if (!document.fullscreenElement && !document.webkitFullscreenElement) {
+    if (el.requestFullscreen) el.requestFullscreen();
+    else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
+  } else {
+    if (document.exitFullscreen) document.exitFullscreen();
+    else if (document.webkitExitFullscreen) document.webkitExitFullscreen();
+  }
+});
+
+document.addEventListener('fullscreenchange', () => {
+  const isFull = document.fullscreenElement || document.webkitFullscreenElement;
+  btnFs.textContent = isFull ? '⛶ Выйти' : '⛶ На весь экран';
+});
+
+elTimer.textContent = '—:—';
+</script>
+</body>
+  </html>
